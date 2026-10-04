@@ -77,7 +77,13 @@ def main():
     is_flag=True,
     help="Don't install the backend engine (assume it's already available)"
 )
-def pull(model_name: str, force: bool, skip_deps: bool) -> None:
+@click.option(
+    "-y",
+    "--yes",
+    is_flag=True,
+    help="Accept license and dependency-install prompts noninteractively",
+)
+def pull(model_name: str, force: bool, skip_deps: bool, yes: bool) -> None:
     """Pull a model from the registry.
     
     Displays license terms, installs the backend engine if needed, and
@@ -100,7 +106,7 @@ def pull(model_name: str, force: bool, skip_deps: bool) -> None:
             click.echo(registry.format_license_display(model_name))
             click.echo()
             
-            if not click.confirm("Do you accept the license terms?", default=True):
+            if not yes and not click.confirm("Do you accept the license terms?", default=True):
                 click.echo("License not accepted. Aborting.")
                 sys.exit(0)
         
@@ -108,7 +114,7 @@ def pull(model_name: str, force: bool, skip_deps: bool) -> None:
         # interpreter, so an existing manifest says nothing about whether this
         # Python can actually run the model.
         if not skip_deps:
-            _ensure_backend_installed(model_info.backend)
+            _ensure_backend_installed(model_info.backend, assume_yes=yes)
         
         # Installing the engine may have swapped a CUDA torch for the CPU
         # wheel PyPI serves for its exact pin. Say so now, with the fix, rather
@@ -133,7 +139,7 @@ def pull(model_name: str, force: bool, skip_deps: bool) -> None:
         handle_error(e)
 
 
-def _ensure_backend_installed(backend: str) -> None:
+def _ensure_backend_installed(backend: str, *, assume_yes: bool = False) -> None:
     """Install the engine a backend needs, prompting before doing so.
     
     Args:
@@ -153,7 +159,7 @@ def _ensure_backend_installed(backend: str) -> None:
     click.echo("This may download several hundred MB and take a few minutes.")
     click.echo()
     
-    if not click.confirm(f"Install the {backend} engine now?", default=True):
+    if not assume_yes and not click.confirm(f"Install the {backend} engine now?", default=True):
         click.echo("Aborting. Install it yourself with:")
         click.echo(f"  {dependencies.install_hint(backend)}")
         click.echo("Then re-run with --skip-deps.")

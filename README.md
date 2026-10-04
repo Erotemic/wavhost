@@ -221,10 +221,18 @@ Download weight layers into local storage and register the model, installing its
 **Options:**
 - `--force`: Pull even if the model is already installed (still resumes existing blobs)
 - `--skip-deps`: Don't install the backend engine (assume it's already available)
+- `-y, --yes`: Accept the model license and dependency-install prompts noninteractively
 
 **Example:**
 ```bash
 wavhost pull chatterbox-base
+```
+
+For explicit automated provisioning, acknowledge the model license and any
+backend-install prompt without reading from a terminal:
+
+```bash
+wavhost pull chatterbox-base --yes
 ```
 
 ### `wavhost run <model_name> <text>`

@@ -136,6 +136,19 @@ def test_pull_stays_quiet_when_gpu_build_is_fine(storage, engine, fake_pull):
     assert "Warning:" not in result.output
 
 
+def test_pull_yes_accepts_prompts_noninteractively(storage, engine, fake_pull):
+    """--yes makes pull suitable for explicit noninteractive provisioning."""
+    engine["installed"] = False
+
+    result = CliRunner().invoke(main, ["pull", "chatterbox-turbo", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert "Do you accept the license terms?" not in result.output
+    assert "Install the chatterbox engine now?" not in result.output
+    assert engine["installs"] == ["chatterbox"]
+    assert storage.manifest_exists("resemble", "chatterbox-turbo", "latest")
+
+
 def test_pull_skip_deps_never_installs(storage, engine, fake_pull):
     """--skip-deps leaves environment management to the user."""
     engine["installed"] = False
