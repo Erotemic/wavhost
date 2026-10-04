@@ -57,7 +57,11 @@ WAVHOST_QWEN_DTYPE=float16 wavhost run qwen-0.6-customvoice "Hello"
 
 Explicit BF16 is rejected on pre-Ampere CUDA hardware rather than failing later
 inside model loading. FlashAttention 2 remains optional and is not enabled by
-Wavhost automatically.
+Wavhost automatically. Precision selection cannot restore GPU architectures
+that a PyTorch wheel no longer contains, so older NVIDIA cards still need a
+CUDA/PyTorch build with compatible device code. The Pascal path was exercised
+on a GTX 1080 Ti with a CUDA 12.6 PyTorch build before this change was marked
+ready for review.
 
 ### Pull a Model
 
@@ -229,7 +233,8 @@ wavhost pull chatterbox-base
 ```
 
 For explicit automated provisioning, acknowledge the model license and any
-backend-install prompt without reading from a terminal:
+backend-install prompt without reading from a terminal. The license text is
+still displayed; `--yes` suppresses only the interactive confirmation prompts:
 
 ```bash
 wavhost pull chatterbox-base --yes

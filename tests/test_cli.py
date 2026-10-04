@@ -143,6 +143,8 @@ def test_pull_yes_accepts_prompts_noninteractively(storage, engine, fake_pull):
     result = CliRunner().invoke(main, ["pull", "chatterbox-turbo", "--yes"])
 
     assert result.exit_code == 0, result.output
+    # --yes is explicit acceptance, not a way to hide what is being accepted.
+    assert "LICENSE:" in result.output
     assert "Do you accept the license terms?" not in result.output
     assert "Install the chatterbox engine now?" not in result.output
     assert engine["installs"] == ["chatterbox"]

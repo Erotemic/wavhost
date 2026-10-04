@@ -42,3 +42,27 @@ def test_setup_module_logger_uses_package_handler(monkeypatch):
         module_logger.handlers[:] = old_module_handlers
         module_logger.setLevel(old_module_level)
         module_logger.propagate = old_module_propagate
+
+
+def test_setup_logger_is_idempotent(monkeypatch):
+    package_logger = logging.getLogger(PACKAGE_LOGGER_NAME)
+    old_handlers = list(package_logger.handlers)
+    old_level = package_logger.level
+    old_propagate = package_logger.propagate
+    stream = io.StringIO()
+    try:
+        package_logger.handlers.clear()
+        monkeypatch.setattr(sys, "stdout", stream)
+
+        setup_logger("wavhost.first", level=logging.INFO)
+        first_handlers = list(package_logger.handlers)
+        setup_logger("wavhost.second", level=logging.INFO)
+
+        assert len(first_handlers) == 1
+        assert package_logger.handlers == first_handlers
+        get_logger("wavhost.backends").info("once")
+        assert stream.getvalue().count("once") == 1
+    finally:
+        package_logger.handlers[:] = old_handlers
+        package_logger.setLevel(old_level)
+        package_logger.propagate = old_propagate
