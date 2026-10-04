@@ -113,6 +113,55 @@ def test_backend_cache_lru_limit(client, mock_speech, monkeypatch):
     assert mock_speech["create_backend"].call_count == 3
 
 
+def test_server_device_override_puts_kokoro_on_cuda(client, mock_speech, monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setenv("WAVHOST_DEVICE", "cuda")
+    response = client.post(
+        "/v1/audio/speech",
+        json={"model": "kokoro", "input": "Hello", "response_format": "pcm"},
+    )
+
+    assert response.status_code == 200
+    assert mock_speech["create_backend"].call_args.kwargs["device"] == "cuda"
+
+
+def test_explicit_cuda_does_not_silently_fall_back(client, mock_speech, monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setenv("WAVHOST_DEVICE", "cuda")
+    response = client.post(
+        "/v1/audio/speech",
+        json={"model": "kokoro", "input": "Hello", "response_format": "pcm"},
+    )
+
+    assert response.status_code == 500
+    assert "CUDA is not available" in response.json()["detail"]
+
+
+def test_backend_cache_separates_server_devices(client, mock_speech, monkeypatch):
+    payload = {"model": "chatterbox-turbo", "input": "Hello", "response_format": "pcm"}
+    monkeypatch.setenv("WAVHOST_DEVICE", "cpu")
+    assert client.post("/v1/audio/speech", json=payload).status_code == 200
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setenv("WAVHOST_DEVICE", "cuda")
+    assert client.post("/v1/audio/speech", json=payload).status_code == 200
+
+    assert mock_speech["create_backend"].call_count == 2
+    assert [
+        call.kwargs["device"] for call in mock_speech["create_backend"].call_args_list
+    ] == ["cpu", "cuda"]
+
+
+def test_invalid_server_device_fails_request(client, mock_speech, monkeypatch):
+    monkeypatch.setenv("WAVHOST_DEVICE", "banana")
+    response = client.post(
+        "/v1/audio/speech",
+        json={"model": "chatterbox-turbo", "input": "Hello", "response_format": "pcm"},
+    )
+
+    assert response.status_code == 500
+    assert "WAVHOST_DEVICE" in response.json()["detail"]
+
+
 def test_iter_audio_chunks_empty():
     assert list(iter_audio_chunks(b"")) == []
 

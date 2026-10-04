@@ -122,6 +122,18 @@ WAVHOST_BACKEND_CACHE_SIZE=0 wavhost serve
 The cache is process-local and uses least-recently-used eviction. Restart the
 server after replacing model checkpoint files on disk.
 
+The HTTP server can also override model device recommendations globally. By
+default `WAVHOST_DEVICE=auto` keeps each registry entry's recommendation. Set
+`WAVHOST_DEVICE=cuda` (or pass `wavhost serve --device cuda`) to force all
+served models, including Kokoro, onto the selected CUDA device. Explicit CUDA
+or MPS requests fail instead of silently benchmarking a CPU fallback when that
+accelerator is unavailable.
+
+```bash
+WAVHOST_DEVICE=cuda wavhost serve
+wavhost serve --device cpu
+```
+
 ### Use the API
 
 ```bash
@@ -324,6 +336,7 @@ Start the OpenAI-compatible TTS server.
 **Options:**
 - `--host HOST`: Host to bind to (default: `127.0.0.1`)
 - `--port PORT`: Port to bind to (default: `11435`)
+- `--device DEVICE`: Backend device for HTTP-served models (`auto`, `cuda`, `cpu`, `mps`); default `auto` preserves each model's recommendation
 - `--reload`: Enable auto-reload for development
 
 **Example:**

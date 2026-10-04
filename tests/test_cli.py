@@ -195,6 +195,34 @@ def test_pull_unknown_model_lists_alternatives(storage, engine, fake_pull):
     assert "chatterbox-turbo" in result.output
 
 
+def test_serve_device_sets_server_policy(monkeypatch):
+    calls = []
+    monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: calls.append((args, kwargs)))
+    monkeypatch.setattr("wavhost.cli.torch.cuda.is_available", lambda: True)
+    # Track the variable through monkeypatch so serve()'s process-local update
+    # cannot leak into later tests in this pytest process.
+    monkeypatch.setenv("WAVHOST_DEVICE", "auto")
+
+    result = CliRunner().invoke(main, ["serve", "--device", "cuda", "--port", "12345"])
+
+    assert result.exit_code == 0, result.output
+    assert calls
+    assert calls[0][1]["port"] == 12345
+    assert "Backend device: cuda" in result.output
+
+
+def test_serve_explicit_cuda_fails_before_start(monkeypatch):
+    calls = []
+    monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: calls.append((args, kwargs)))
+    monkeypatch.setattr("wavhost.cli.torch.cuda.is_available", lambda: False)
+
+    result = CliRunner().invoke(main, ["serve", "--device", "cuda"])
+
+    assert result.exit_code == 1
+    assert "CUDA is not available" in result.output
+    assert calls == []
+
+
 def test_rm_removes_installed_model(storage, engine, fake_pull):
     """wavhost rm deletes a pulled model from local storage."""
     CliRunner().invoke(main, ["pull", "chatterbox-turbo"], input="y\n")

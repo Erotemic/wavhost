@@ -1,5 +1,6 @@
 """Command-line interface for Wavhost."""
 
+import os
 import sys
 from pathlib import Path
 from typing import NoReturn, Optional
@@ -301,8 +302,15 @@ def _generate_speech(
 @main.command()
 @click.option("--host", default=DEFAULT_HOST, help="Host to bind to")
 @click.option("--port", default=DEFAULT_PORT, type=int, help="Port to bind to")
+@click.option(
+    "--device",
+    type=click.Choice(["auto", "cuda", "cpu", "mps"], case_sensitive=False),
+    default=lambda: os.environ.get("WAVHOST_DEVICE", "auto"),
+    show_default="auto",
+    help="Backend device for HTTP-served models; auto uses each model's recommendation",
+)
 @click.option("--reload", is_flag=True, help="Enable auto-reload for development")
-def serve(host: str, port: int, reload: bool) -> None:
+def serve(host: str, port: int, device: str, reload: bool) -> None:
     """Start the OpenAI-compatible TTS server.
     
     Serves an OpenAI-compatible /v1/audio/speech endpoint.
@@ -311,9 +319,17 @@ def serve(host: str, port: int, reload: bool) -> None:
     """
     try:
         import uvicorn
-        
-        _display_server_info(host, port)
-        
+
+        device = device.lower()
+        if device == "cuda" and not torch.cuda.is_available():
+            raise BackendError("--device cuda was requested, but CUDA is not available")
+        if device == "mps" and not (
+            hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+        ):
+            raise BackendError("--device mps was requested, but MPS is not available")
+        os.environ["WAVHOST_DEVICE"] = device
+        _display_server_info(host, port, device)
+
         uvicorn.run(
             "wavhost.server:app",
             host=host,
@@ -328,14 +344,16 @@ def serve(host: str, port: int, reload: bool) -> None:
         handle_error(e)
 
 
-def _display_server_info(host: str, port: int) -> None:
+def _display_server_info(host: str, port: int, device: str = "auto") -> None:
     """Display server startup information.
     
     Args:
         host: Server host
         port: Server port
+        device: Server-wide backend device policy
     """
     click.echo("Starting Wavhost server...")
+    click.echo(f"Backend device: {device}")
     click.echo(f"OpenAI-compatible endpoint: http://{host}:{port}/v1/audio/speech")
     click.echo(f"\nExample curl command:")
     click.echo(f'curl http://{host}:{port}/v1/audio/speech \\')

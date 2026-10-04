@@ -39,7 +39,10 @@ logger = setup_logger(__name__)
 
 _BACKEND_CACHE_SIZE_ENV = "WAVHOST_BACKEND_CACHE_SIZE"
 _BACKEND_CACHE_DEFAULT_SIZE = 1
-_BackendCacheKey = tuple[str, str, str, str]
+_SERVER_DEVICE_ENV = "WAVHOST_DEVICE"
+_SERVER_DEVICE_AUTO = "auto"
+_SERVER_DEVICE_CHOICES = {_SERVER_DEVICE_AUTO, "cuda", "cpu", "mps"}
+_BackendCacheKey = tuple[str, str, str, str, str]
 _backend_cache: OrderedDict[_BackendCacheKey, TTSBackend] = OrderedDict()
 _backend_cache_lock = Lock()
 
@@ -68,12 +71,40 @@ def _backend_cache_size() -> int:
     return size
 
 
-def _backend_cache_key(model_info: ModelInfo, checkpoint: Path) -> _BackendCacheKey:
+def _server_device_override() -> Optional[str]:
+    """Return the server-wide backend device override, or None for model policy."""
+    raw = os.environ.get(_SERVER_DEVICE_ENV, _SERVER_DEVICE_AUTO).strip().lower()
+    if not raw:
+        raw = _SERVER_DEVICE_AUTO
+    if raw not in _SERVER_DEVICE_CHOICES:
+        allowed = ", ".join(sorted(_SERVER_DEVICE_CHOICES))
+        raise BackendError(
+            f"Invalid {_SERVER_DEVICE_ENV}={raw!r}; expected one of: {allowed}"
+        )
+    if raw == _SERVER_DEVICE_AUTO:
+        return None
+    if raw == "cuda" and not torch.cuda.is_available():
+        raise BackendError(
+            f"{_SERVER_DEVICE_ENV}=cuda was requested, but CUDA is not available"
+        )
+    if raw == "mps" and not (
+        hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+    ):
+        raise BackendError(
+            f"{_SERVER_DEVICE_ENV}=mps was requested, but MPS is not available"
+        )
+    return raw
+
+
+def _backend_cache_key(
+    model_info: ModelInfo, checkpoint: Path, device: Optional[str]
+) -> _BackendCacheKey:
     return (
         model_info.namespace,
         model_info.name,
         model_info.tag,
         str(checkpoint.resolve()),
+        device or _SERVER_DEVICE_AUTO,
     )
 
 
@@ -103,16 +134,17 @@ def get_cached_backend(model_info: ModelInfo, checkpoint: Path) -> TTSBackend:
     once. Set ``WAVHOST_BACKEND_CACHE_SIZE=0`` to disable caching.
     """
     cache_size = _backend_cache_size()
+    device = _server_device_override()
     if cache_size == 0:
-        return create_backend(model_info, checkpoint_path=checkpoint)
+        return create_backend(model_info, device=device, checkpoint_path=checkpoint)
 
-    key = _backend_cache_key(model_info, checkpoint)
+    key = _backend_cache_key(model_info, checkpoint, device)
     released: list[TTSBackend] = []
     with _backend_cache_lock:
         backend = _backend_cache.pop(key, None)
         if backend is None:
             logger.info("Backend cache miss for model %s", model_info.name)
-            backend = create_backend(model_info, checkpoint_path=checkpoint)
+            backend = create_backend(model_info, device=device, checkpoint_path=checkpoint)
         else:
             logger.debug("Backend cache hit for model %s", model_info.name)
         _backend_cache[key] = backend
