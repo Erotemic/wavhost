@@ -1,8 +1,12 @@
 """FastAPI server with OpenAI-compatible /v1/audio/speech endpoint."""
 
+import gc
+import os
 import tempfile
+from collections import OrderedDict
 from enum import Enum
 from pathlib import Path
+from threading import Lock
 from typing import Iterator, Literal, Optional
 
 import torch
@@ -12,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from wavhost.audio import encode_wav
-from wavhost.backends import create_backend
+from wavhost.backends import TTSBackend, create_backend
 from wavhost.config import MAX_INPUT_LENGTH, MAX_SPEED, MIN_SPEED, VERSION
 from wavhost.exceptions import (
     BackendError,
@@ -21,7 +25,7 @@ from wavhost.exceptions import (
     StorageError,
 )
 from wavhost.logging_config import get_logger
-from wavhost.registry import ModelRegistry
+from wavhost.registry import ModelInfo, ModelRegistry
 from wavhost.storage import WavhostStorage
 from wavhost.voices import (
     VoiceAlreadyExistsError,
@@ -32,6 +36,91 @@ from wavhost.voices import (
 )
 
 logger = get_logger(__name__)
+
+_BACKEND_CACHE_SIZE_ENV = "WAVHOST_BACKEND_CACHE_SIZE"
+_BACKEND_CACHE_DEFAULT_SIZE = 1
+_BackendCacheKey = tuple[str, str, str, str]
+_backend_cache: OrderedDict[_BackendCacheKey, TTSBackend] = OrderedDict()
+_backend_cache_lock = Lock()
+
+
+def _backend_cache_size() -> int:
+    """Return the configured number of model backends to keep warm."""
+    raw = os.environ.get(_BACKEND_CACHE_SIZE_ENV, str(_BACKEND_CACHE_DEFAULT_SIZE))
+    try:
+        size = int(raw)
+    except ValueError:
+        logger.warning(
+            "%s=%r is not an integer; using %d",
+            _BACKEND_CACHE_SIZE_ENV,
+            raw,
+            _BACKEND_CACHE_DEFAULT_SIZE,
+        )
+        return _BACKEND_CACHE_DEFAULT_SIZE
+    if size < 0:
+        logger.warning(
+            "%s=%r is negative; using %d",
+            _BACKEND_CACHE_SIZE_ENV,
+            raw,
+            _BACKEND_CACHE_DEFAULT_SIZE,
+        )
+        return _BACKEND_CACHE_DEFAULT_SIZE
+    return size
+
+
+def _backend_cache_key(model_info: ModelInfo, checkpoint: Path) -> _BackendCacheKey:
+    return (
+        model_info.namespace,
+        model_info.name,
+        model_info.tag,
+        str(checkpoint.resolve()),
+    )
+
+
+def _release_backend_references(backends: list[TTSBackend]) -> None:
+    """Release evicted models and return unused CUDA allocator blocks."""
+    if not backends:
+        return
+    backends.clear()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def clear_backend_cache() -> None:
+    """Drop all cached model backends. Primarily useful for tests/reloads."""
+    with _backend_cache_lock:
+        released = list(_backend_cache.values())
+        _backend_cache.clear()
+    _release_backend_references(released)
+
+
+def get_cached_backend(model_info: ModelInfo, checkpoint: Path) -> TTSBackend:
+    """Return an LRU-cached backend so model weights remain warm across requests.
+
+    The default cache size is one model. This avoids reloading weights for every
+    speech chunk without assuming that a GPU can hold every installed model at
+    once. Set ``WAVHOST_BACKEND_CACHE_SIZE=0`` to disable caching.
+    """
+    cache_size = _backend_cache_size()
+    if cache_size == 0:
+        return create_backend(model_info, checkpoint_path=checkpoint)
+
+    key = _backend_cache_key(model_info, checkpoint)
+    released: list[TTSBackend] = []
+    with _backend_cache_lock:
+        backend = _backend_cache.pop(key, None)
+        if backend is None:
+            backend = create_backend(model_info, checkpoint_path=checkpoint)
+        _backend_cache[key] = backend
+        while len(_backend_cache) > cache_size:
+            _old_key, old_backend = _backend_cache.popitem(last=False)
+            released.append(old_backend)
+            del old_backend
+
+    _release_backend_references(released)
+    return backend
+
 
 app = FastAPI(
     title="Wavhost",
@@ -411,7 +500,7 @@ async def create_speech(request: SpeechRequest):
         
         model_info = registry.get_model_info(request.model)
         checkpoint = storage.ensure_checkpoint(model_info)
-        backend = create_backend(model_info, checkpoint_path=checkpoint)
+        backend = get_cached_backend(model_info, checkpoint)
 
         voice_arg, voice_handle = resolve_voice(request.voice, voice_storage)
         if voice_handle:
