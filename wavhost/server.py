@@ -24,7 +24,7 @@ from wavhost.exceptions import (
     ModelNotInstalledError,
     StorageError,
 )
-from wavhost.logging_config import get_logger
+from wavhost.logging_config import setup_logger
 from wavhost.registry import ModelInfo, ModelRegistry
 from wavhost.storage import WavhostStorage
 from wavhost.voices import (
@@ -35,7 +35,7 @@ from wavhost.voices import (
     resolve_voice,
 )
 
-logger = get_logger(__name__)
+logger = setup_logger(__name__)
 
 _BACKEND_CACHE_SIZE_ENV = "WAVHOST_BACKEND_CACHE_SIZE"
 _BACKEND_CACHE_DEFAULT_SIZE = 1
@@ -111,7 +111,10 @@ def get_cached_backend(model_info: ModelInfo, checkpoint: Path) -> TTSBackend:
     with _backend_cache_lock:
         backend = _backend_cache.pop(key, None)
         if backend is None:
+            logger.info("Backend cache miss for model %s", model_info.name)
             backend = create_backend(model_info, checkpoint_path=checkpoint)
+        else:
+            logger.debug("Backend cache hit for model %s", model_info.name)
         _backend_cache[key] = backend
         while len(_backend_cache) > cache_size:
             _old_key, old_backend = _backend_cache.popitem(last=False)
